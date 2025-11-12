@@ -4,36 +4,45 @@ import boto3
 import requests
 from datetime import datetime
 
-# Nombre de la tabla DynamoDB
+# DynamoDB
 TABLE_NAME = "SismosScraping"
-
-# Inicializar recurso DynamoDB
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
 
+# Endpoint ArcGIS del IGP
+IGP_API_URL = "https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0/query"
+
 def lambda_handler(event, context):
     try:
-        # API oficial del IGP
-        url = "https://ultimosismo.igp.gob.pe/api/sismo"
-        response = requests.get(url, timeout=10)
+        # Consulta: obtener los 10 últimos sismos ordenados por fecha DESC
+        params = {
+            "where": "1=1",
+            "outFields": "*",
+            "orderByFields": "Fecha DESC",
+            "resultRecordCount": 10,
+            "f": "json"
+        }
+        response = requests.get(IGP_API_URL, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
 
-        # Tomar los 10 últimos sismos
-        ultimos = data[:10]
+        features = data.get("features", [])
+        if not features:
+            raise ValueError("No se encontraron datos de sismos en la respuesta del IGP")
 
         items = []
-        for s in ultimos:
+        for f in features:
+            attrs = f.get("attributes", {})
             item = {
                 "id": str(uuid.uuid4()),
-                "fecha_local": s.get("fechaLocal", "N/A"),
-                "hora_local": s.get("horaLocal", "N/A"),
-                "magnitud": str(s.get("magnitud", "N/A")),
-                "profundidad_km": str(s.get("profundidad", "N/A")),
-                "latitud": str(s.get("latitud", "N/A")),
-                "longitud": str(s.get("longitud", "N/A")),
-                "referencia": s.get("referenciaGeografica", "N/A"),
-                "fuente": "IGP",
+                "fecha": attrs.get("Fecha", "N/A"),
+                "hora": attrs.get("Hora", "N/A"),
+                "magnitud": str(attrs.get("Magnitud", "N/A")),
+                "profundidad_km": str(attrs.get("Profundidad", "N/A")),
+                "latitud": str(attrs.get("Latitud", "N/A")),
+                "longitud": str(attrs.get("Longitud", "N/A")),
+                "referencia": attrs.get("Referencia", "N/A"),
+                "fuente": "IGP ArcGIS",
                 "timestamp_guardado": datetime.utcnow().isoformat()
             }
             table.put_item(Item=item)
@@ -44,7 +53,7 @@ def lambda_handler(event, context):
             "headers": {"Content-Type": "application/json"},
             "body": json.dumps({
                 "tipo": "INFO",
-                "mensaje": "Scraping exitoso desde API dinámica del IGP",
+                "mensaje": "Scraping exitoso desde el servicio ArcGIS del IGP",
                 "cantidad_guardada": len(items),
                 "datos": items
             })
